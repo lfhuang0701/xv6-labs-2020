@@ -11,7 +11,7 @@ int main(int argc, char *argv[])
     int sleepNum = atoi(argv[1]);
     printf("(nothing happen for a little while)\n");
     sleep(sleepNum);
-    //printf("sleep %d success\n", &sleepNum);
+    printf("sleep %d success\n", &sleepNum);
     exit(0);
 
 }
