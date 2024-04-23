@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -101,9 +102,32 @@ uint64
 sys_trace(void){
   printf("current:sys_trace\n");
   int mask;
-  if(argint(0, &mask) < 0){  //myproc->trapfram->a0,及当前进程从用户态传来的第一个参数，在trace系统调用中，传递的是追踪掩码，
+  if(argint(0, &mask) < 0){  //myproc->trapfram->a0,即当前进程从用户态传来的第一个参数，在trace系统调用中，传递的是追踪掩码，
     return -1;
   }
   myproc()->traceMask = mask;
+  return 0;
+}
+
+//计算当前的空闲内存及正在运行的进程数量，并拷贝到用户空间
+uint64
+sys_sysinfo(void){
+  
+  //以指针的形式读取系统调用的第一个参数，并将该指针作为访问用户内存的地址，在此例中作为保存sysinfo结构体的缓冲区
+  uint64 addr;
+  if(argaddr(0, &addr) < 0)   //此时addr为返回用户空间参数的地址
+    return -1;
+
+  //计算空闲内存和正在运行的进程数量，存放在结构体sysinfo中
+  struct sysinfo sinfo;
+  sinfo.freemem = count_freemem();
+  sinfo.nproc = count_process();
+  printf("%d\n", sinfo.freemem);
+  printf("%d\n", sinfo.nproc);
+  //使用copyout函数将内核空间数据拷贝到用户空间
+  if(copyout(myproc()->pagetable, addr, (char*)&sinfo, sizeof(sinfo)) < 0){
+    printf("copy data to user failed\n");
+    return -1;
+  }
   return 0;
 }
