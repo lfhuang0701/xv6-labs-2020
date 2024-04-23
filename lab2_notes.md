@@ -1,5 +1,10 @@
 # trace
 
+## 知识点
+
+1. 了解从用户态到内核态函数调用的全过程
+2. 进程上下文结构体proc
+
 ## 整体流程
 
 1. 在user/user.h声明用户态函数trace并在user/trace.c定义函数，实现用户态的函数，并在Makefile的UPROGS中添加\$U/\_trace
