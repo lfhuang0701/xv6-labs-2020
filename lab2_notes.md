@@ -65,5 +65,9 @@
 1. 添加一个系统调用，返回空闲内存及已经创建的进程数量，
 2. 难点在于要从内核空间拷贝一个结构体（sysinfo）到用户空间，
 3. 以及添加计算空闲内存的函数与计算已创建的进程数量的函数
+4. 了解xv86的内存管理机制，kernel/kalloc.c中内存分配函数kalloc()和内存释放函数kfree()
 
 ## 整体流程
+
+1. 同trace实验一样，在user/user.h声明sysinfo()函数及sysinfo结构体，供测试程序使用，在user/usys.pl中添加entry("sysinfo"),实现用户态函数与内核态函数的连接，在kernel/syscall.h添加系统调用号，在kernel/syscall.c添加系统调用函数sys_sysinfo,
+2. 由于需要获取空闲内存数量,故定义计算空闲内存函数
