@@ -18,10 +18,11 @@ main(int argc, char *argv[])
     fprintf(2, "%s: trace failed\n", argv[0]);
     exit(1);
   }
-  
+  printf("trace finished\n");
   for(i = 2; i < argc && i < MAXARG; i++){
     nargv[i-2] = argv[i];
   }
   exec(nargv[0], nargv);
-  exit(0);//te
+  printf("exec finished\n");
+  exit(0);
 }

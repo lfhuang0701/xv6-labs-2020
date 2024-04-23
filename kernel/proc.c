@@ -107,6 +107,8 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
+  p->traceMask = 0;  //设置新进程的追踪掩码为0，防止出错
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
@@ -276,6 +278,8 @@ fork(void)
   np->sz = p->sz;
 
   np->parent = p;
+
+  np->traceMask = p->traceMask; //将父进程的追踪掩码传递给子进程，代表子进程也将被追踪
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);

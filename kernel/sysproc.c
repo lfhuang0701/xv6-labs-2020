@@ -95,3 +95,15 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+//设置当前进程的追踪掩码
+uint64
+sys_trace(void){
+  printf("current:sys_trace\n");
+  int mask;
+  if(argint(0, &mask) < 0){  //myproc->trapfram->a0,及当前进程从用户态传来的第一个参数，在trace系统调用中，传递的是追踪掩码，
+    return -1;
+  }
+  myproc()->traceMask = mask;
+  return 0;
+}
