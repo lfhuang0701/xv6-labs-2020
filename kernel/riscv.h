@@ -335,8 +335,11 @@ sfence_vma()
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
 
-#define PTE2PA(pte) (((pte) >> 10) << 12)
+//在RISC-V中物理内存地址为56bit，PTE一共64bit，其中高10bit保留，低10bit为flag，右移10bit获取PPN（Physical Page Num）
+//也就是物理page号，左移12bit为offset，这里获取的是下一级页表的起始地址，故offset为0，这样44bit的PPN加12bit的0组成了下一级页表的物理地址
+#define PTE2PA(pte) (((pte) >> 10) << 12) 
 
+//取标志位
 #define PTE_FLAGS(pte) ((pte) & 0x3FF)
 
 // extract the three 9-bit page table indices from a virtual address.
