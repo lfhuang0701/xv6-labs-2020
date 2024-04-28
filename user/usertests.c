@@ -8,6 +8,7 @@
 #include "kernel/memlayout.h"
 #include "kernel/riscv.h"
 
+
 //
 // Tests xv6 system calls.  usertests without arguments runs them all
 // and usertests <name> runs <name> test. The test runner creates for
@@ -2543,7 +2544,6 @@ countfree()
   }
   
   int pid = fork();
-
   if(pid < 0){
     printf("fork failed in countfree()\n");
     exit(1);
@@ -2551,7 +2551,6 @@ countfree()
 
   if(pid == 0){
     close(fds[0]);
-    
     while(1){
       uint64 a = (uint64) sbrk(4096);
       if(a == 0xffffffffffffffff){
@@ -2572,7 +2571,6 @@ countfree()
   }
 
   close(fds[1]);
-
   int n = 0;
   while(1){
     char c;

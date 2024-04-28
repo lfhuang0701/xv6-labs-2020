@@ -22,6 +22,7 @@ static void freeproc(struct proc *p);
 extern char trampoline[]; // trampoline.S
 
 // initialize the proc table at boot time.
+//在操作系统启动时初始化进程表，为每一个进程分配并映射一个内核栈，内核栈是操作系统内核用于上下文切换和处理中断/异常的内存区域
 void
 procinit(void)
 {
@@ -34,14 +35,14 @@ procinit(void)
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+      // char *pa = kalloc();
+      // if(pa == 0)
+      //   panic("kalloc");
+      // uint64 va = KSTACK((int) (p - proc));
+      // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      // p->kstack = va;
   }
-  kvminithart();
+  // kvminithart();
 }
 
 // Must be called with interrupts disabled,
@@ -89,6 +90,7 @@ allocpid() {
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
+//分配一个新的进程控制块，返回其指针
 static struct proc*
 allocproc(void)
 {
@@ -106,6 +108,21 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+
+  // allocate and map the proc_kernel_pagetable，
+  p->proc_kernel_pagetable = pkvminit();
+
+  //allocate a page for process kernel stack, refer to procinit()
+  //在进程的内核页表中添加进程内核栈的映射
+  char *pa = kalloc();
+  if(pa == 0){
+    panic("kalloc");
+  }
+  uint64 va = KSTACK((int) (0));
+  //uint64 va = KSTACK((int) (p - proc));
+  if(mappages(p->proc_kernel_pagetable, va, PGSIZE, (uint64)pa, PTE_R | PTE_W) != 0)
+    panic("proc kernel stack map");
+  p->kstack = va;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -141,6 +158,15 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  
+  //取消内核栈映射并释放内核栈
+  uvmunmap(p->proc_kernel_pagetable, p->kstack, 1 , 1);
+  //释放进程的内核页表
+  if(p->proc_kernel_pagetable)
+    free_proc_kernelpagetable(p->proc_kernel_pagetable);
+  p->kstack = 0;
+  p->proc_kernel_pagetable = 0;
+  
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -195,6 +221,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmfree(pagetable, sz);
 }
 
+
 // a user program that calls exec("/init")
 // od -t xC initcode
 uchar initcode[] = {
@@ -240,7 +267,6 @@ growproc(int n)
 {
   uint sz;
   struct proc *p = myproc();
-
   sz = p->sz;
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
@@ -453,6 +479,7 @@ wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+// 进程调度器的职责是决定哪个进程将获得处理器时间，以及在何时进行进程上下文切换。
 void
 scheduler(void)
 {
@@ -473,7 +500,15 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        //将进程的内核页表写入SATP寄存器
+        w_satp(MAKE_SATP(p->proc_kernel_pagetable));
+        //使能页表并刷新TLB
+        sfence_vma();
+
         swtch(&c->context, &p->context);
+
+        //运行完毕后切换内核页表
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
@@ -486,6 +521,8 @@ scheduler(void)
 #if !defined (LAB_FS)
     if(found == 0) {
       intr_on();
+      //使用全局内核页表
+      kvminithart();
       asm volatile("wfi");
     }
 #else
