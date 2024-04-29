@@ -424,7 +424,7 @@ Xv6有一个单独的用于在内核中执行程序时的内核页表。内核�
    int
    copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
    {
-     
+
      return copyinstr_new(pagetable, dst, srcva, max);
    }
    ```
