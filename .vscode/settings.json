@@ -3,6 +3,8 @@
     "files.associations": {
         "fs.h": "c",
         "spinlock.h": "c",
-        "proc.h": "c"
+        "proc.h": "c",
+        "defs.h": "c",
+        "memlayout.h": "c"
     }
 }

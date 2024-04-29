@@ -248,6 +248,11 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  //new Add
+  //copy user page to process kernel page
+  if(copy_pagetable(p->pagetable, p->proc_kernel_pagetable, 0, p->sz) != 0)
+    panic("userinit: copy_pagetable failed");
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -267,15 +272,34 @@ growproc(int n)
 {
   uint sz;
   struct proc *p = myproc();
+  
+  //检查内存限制
+  if(PGROUNDUP(p->sz + n) >= PLIC)
+    return -1;
+
   sz = p->sz;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    uint64 newsz;
+    if((newsz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    
+    if(copy_pagetable(p->pagetable, p->proc_kernel_pagetable, sz, n) != 0){
+      //向进程内核页表拷贝失败时，撤销用户页表内存的扩大，以实现同步映射
+      printf("grow copy failed\n");
+      uvmdealloc(p->pagetable, newsz, sz);
+      return -1;
+    }
+    sz = newsz;
+    
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    uvmdealloc(p->pagetable, sz, sz + n);
+    //减小用户内存后，内核进程页表也应该对应减少对应映射，但是进程内核页表不应该释放实际用户内存（事实上上一步已经这么做了）
+    //因此不能使用uvmdealloc函数，在vm.c定义新函数kuvmdealloc,减少内核进程页表对应的映射
+    sz = kvmdealloc(p->proc_kernel_pagetable, sz, sz + n);
   }
   p->sz = sz;
+
   return 0;
 }
 
@@ -294,13 +318,15 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0 || 
+      copy_pagetable(np->pagetable, np->proc_kernel_pagetable, 0, p->sz) != 0){ //将子进程用户页表拷贝到子进程内核页表
     freeproc(np);
     release(&np->lock);
     return -1;
   }
   np->sz = p->sz;
-
+  
   np->parent = p;
 
   // copy saved user registers.

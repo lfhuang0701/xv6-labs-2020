@@ -71,9 +71,9 @@ pkvminit(void)
     panic("pkvmmap virtio0");
 
   // CLINT
-  
-  if(mappages(proc_kernel_pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W) != 0)
-    panic("pkvmmap clint");
+  //内核启动时用到CLINT，运行过程中不使用，用户进程的最大内存与此部分重叠，因此取消该部分映射
+  // if(mappages(proc_kernel_pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W) != 0)
+  //   panic("pkvmmap clint");
   
   // PLIC
 
@@ -209,7 +209,10 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
+    {
+      printf("va %p\n", a);
       panic("remap");
+    }
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -458,23 +461,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
-
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
-
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+  
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -485,40 +473,8 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
-
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
-
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
-
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
-  }
+  
+  return copyinstr_new(pagetable, dst, srcva, max);
 }
 
 //vmprint使用到的递归函数
@@ -556,7 +512,7 @@ free_proc_kernelpagetable(pagetable_t pagetable)
   //取消映射
   uvmunmap(pagetable, UART0, 1, 0);
   uvmunmap(pagetable, VIRTIO0, 1, 0);
-  uvmunmap(pagetable, CLINT, (uint64)(0x10000 / PGSIZE), 0);
+  // uvmunmap(pagetable, CLINT, (uint64)(0x10000 / PGSIZE), 0);
   uvmunmap(pagetable, PLIC, (uint64)(0x40000 / PGSIZE), 0);
   uvmunmap(pagetable, KERNBASE, (uint64)(((uint64)etext-KERNBASE) / PGSIZE), 0);
   uvmunmap(pagetable, (uint64)etext, (uint64)((PHYSTOP-(uint64)etext) / PGSIZE), 0);
@@ -564,4 +520,45 @@ free_proc_kernelpagetable(pagetable_t pagetable)
 
   //释放页面
   freewalk_proc_kernelpgtbl(pagetable);
+}
+
+//copy the old_pagetable to new_pagetable
+int
+copy_pagetable(pagetable_t old_pagetable, pagetable_t new_pagetable, uint64 start, uint64 sz)
+{
+  pte_t *pte;
+  uint64 pa;
+  int flags;
+  for(uint64 i = PGROUNDUP(start); i < sz + start; i += PGSIZE)
+  {
+    if((pte = walk(old_pagetable, i, 0)) == 0)
+      panic("copy_pagetable: pte donot exist");
+    if((*pte & PTE_V) == 0)
+      panic("copy_pagetable: pte unvaild");
+
+    pa = PTE2PA(*pte);
+
+    flags = PTE_FLAGS(*pte) & ~PTE_U; //内核无法访问设置了PTE_U的用户地址
+
+    //向进程内核页表映射,使用同一个物理地址，因为两个映射都指向同处
+    if(mappages(new_pagetable, i, PGSIZE, pa, flags) != 0){
+      uvmunmap(new_pagetable, PGROUNDUP(start), (i - PGROUNDUP(start)) / PGSIZE, 0); //映射失败，取消之前的映射，但不释放实际的内存
+      return -1;
+    }
+
+  }
+  return 0;
+}
+
+//deallocate process kernel pagetable
+uint64
+kvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+{
+  if(newsz >= oldsz)
+    return oldsz;
+  if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+    uint64 npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+    uvmunmap(pagetable, PGROUNDUP(newsz), npages, 0);
+  }
+  return newsz;
 }

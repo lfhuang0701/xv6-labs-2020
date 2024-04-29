@@ -8,9 +8,19 @@
 
 # A kernel page table per process (hard)
 
+## 实验目的
+
+Xv6有一个单独的用于在内核中执行程序时的内核页表。内核页表直接映射（恒等映射）到物理地址，也就是说内核虚拟地址`x`映射到物理地址仍然是`x`。Xv6还为每个进程的用户地址空间提供了一个单独的页表，只包含该进程用户内存的映射，从虚拟地址0开始。因为内核页表不包含这些映射，所以用户地址（虚拟地址）在内核中无效。因此，当内核需要使用在系统调用中传递的用户指针（例如，传递给`write()`的缓冲区指针）时，内核必须首先将指针转换为物理地址。本节和下一节的目标是允许内核直接解引用用户指针。
+
+**本节目标**：
+
+第一项工作是修改内核来让每一个进程在内核中执行时使用它自己的内核页表的副本。修改`struct proc`来为每一个进程维护一个内核页表，修改调度程序使得切换进程时也切换内核页表。对于这个步骤，每个进程的内核页表都应当与现有的的全局内核页表完全一致。
+
 ## 知识点
 
 1. uvmunmap取消虚拟地址与物理地址的映射，若do_free = 0，那么三级页表中指向pte的指针即*pte被置零，这样就无法通过walk函数由虚拟地址找到指向pte的指针，也就得不到物理地址，但是pte的值没有清零释放，因此需要freewalk进一步置零pte，释放物理内存。但是执行freewalk之前要确保叶子页表的pte被置零，否则会出错，所以根据虚拟首地址及大小执行依次uvmunmap，do_free设置为1，释放叶子页表的物理内存
+2. 熟悉三级页表机制，熟悉页表的创建及释放流程
+3. 熟悉walk，allocproc，scheduler等函数的流程
 
 ## 整体流程
 
@@ -179,16 +189,19 @@
    panic: kerneltrap
 
    ```
+
    使用GDB进行调试，发现错误出现在userinit函数即建立第一个进程时，分配进程控制块时，进行内核栈的映射时发生错误，如下：
 
    ```
    if(mappages(p->proc_kernel_pagetable, va, PGSIZE, (uint64)pa, PTE_R | PTE_W) != 0) 
    ```
+
    继续往下寻找,错误发生在mappages函数内的walk调用内
 
    ```
    if((pte = walk(pagetable, a, 1)) == 0)
    ```
+
    寻找到错误发生在一个判断语句上，似乎错误不在这里，尝试在内核栈映射之前打印进程的内核页表，出现相同的错误 panic: kerneltrap，且打印的进程内核页表的物理地址为0，似乎是创建进程的内核页表出现错误。在创建进程的内核页表函数内映射之前打印页表地址，在创建进程的内核页表函数完成后打印页表地址，发现两者地址不同，故问题可能出现在映射。
 
    检查映射后发现映射没有问题，找出了问题所在，这是之前用来创建进程内核页表的函数:
@@ -196,22 +209,26 @@
    ```
    pkvminit(p->proc_kernel_pagetable);
    ```
+
    这里采用的值传递的方式，函数执行后，p->proc_kernel_pagetable不会改变，改变的是传递进去的副本，改变函数的形式，如下：
 
    ```
    p->proc_kernel_pagetable = pkvminit();
    ```
+
    让pkvminit（）返回一个页表地址，此错误解决。
 4. 出现panic: kvmpa错误，使用GDB找出错误地址，发现错误出现在proc.c文件内的scheduler函数内，出错位置为切换上下文处，如下
 
    ```
    swtch(&c->context, &p->context);
    ```
+
    继续用GDB单步调试进行寻找，出错位置寻找如下
 
    ```
    disk.desc[idx[0]].addr = (uint64) kvmpa((uint64) &buf0);
    ```
+
    其中buf0处于内核栈上，查找buf0的物理地址时，找到的PTE无效导致panic("kvmpa")，由于Kvmpa查找是基于全局内核页表，而之前删除了全局内核页表中关于每个进程的内核栈的映射，故怀疑出错原因是这个
 
    但认真思考后，考虑到进程运行过程中应该使用自己进程内核页表映射的内核栈，故考虑修改Kvmpa函数，修改前函数是基于全局内核页表查询物理内存地址，
@@ -219,17 +236,20 @@
    ```
    pte = walk(kernel_pagetable, va, 0);
    ```
+
    修改后改为基于当前进程的内核页表查询，如下为修改之后
 
    ```
    pte = walk(myproc()->proc_kernel_pagetable, va, 0);
    ```
+
    这时候又出现编译报错如下
 
    ```
    kernel/vm.c:184:22: error: dereferencing pointer to incomplete type 'struct proc'
      184 |   pte = walk(myproc()->proc_kernel_pagetable, va, 0);
    ```
+
    这是因为vm.c文件中没有出现struct proc的定义，故将该结构体定义的头文件引用过来proc.h
 
    接着又出现新的错误如下
@@ -239,6 +259,7 @@
       87 |   struct spinlock lock;
          |                   ^~~~
    ```
+
    这是因为在proc.h中定义结构体proc时，用到了另一个结构体spinlock，而proc.h并没有引用定义该结构体的头文件，故在vm.c中也引用其头文件 spinlock.h,到此，操作系统启动成功
 5. 测试usertests程序时，出现错误 **panic: uvmunmap: not mapped**，通过GDB调试找出出错位置,
 
@@ -249,3 +270,175 @@
 9. 测试reparent2时出现scause 0x000000000000000c
    sepc=0x0000000080005ef0 stval=0x0000000080005ef0
    panic: kerneltrap，这个错误出现的原因是一般出现了页表映射丢失的情况，后检查发现在进程调度函数scheduler中，当进程运行完毕后，应该及时切换到内核页表，原代码缺少这一步骤导致错误
+
+# SImplify copyin/copyinstr
+
+## 实验目的
+
+继续上个实验，当程序在内核执行时，将进程的用户空间地址映射到进程内核页表中，也即将用户页表复制到进程内核页表中，从而使内核能够直接使用映射完成后的虚拟地址访问用户内存，而不用根据用户页表转为物理地址再访问。实验要求修改vm.c中copyin函数，使其调用vmcopyin.c中的copyin_new函数，对copyinstr做相同操作
+
+## 知识点
+
+1. 用户态页表即进程的用户页表，内核态页表内核页表，程序处于内核态时，mmu解析内核页表，如果想访问用户页表，只能通过软件遍历的方法（walk）找到物理地址进行访问，速度较慢，而这两个实验实现了页表的合并，即进程在内核运行时仅使用一个页表，硬件mmu解析这一个页表就可以获取内核页表和用户页表的数据，提高了性能
+2. 拷贝用户页表到进程内核页表
+3. 同步用户页表和进程页表
+
+## 整体流程
+
+1. 在vm.c中定义函数copy_pagetable，实现从用户页表向进程内核页表拷贝映射的功能，start为拷贝地址的起始地址，sz为拷贝大小，在defs.h声明该函数
+
+   ```
+   //copy the old_pagetable to new_pagetable
+   int
+   copy_pagetable(pagetable_t old_pagetable, pagetable_t new_pagetable, uint64 start, uint64 sz)
+   {
+     pte_t *pte;
+     uint64 pa;
+     int flags;
+     for(uint64 i = PGROUNDUP(start); i < sz + start; i += PGSIZE)
+     {
+       if((pte = walk(old_pagetable, i, 0)) == 0)
+         panic("copy_pagetable: pte donot exist");
+       if((*pte & PTE_V) == 0)
+         panic("copy_pagetable: pte unvaild");
+
+       pa = PTE2PA(*pte);
+
+       flags = PTE_FLAGS(*pte) & ~PTE_U; //内核无法访问设置了PTE_U的用户地址
+
+       //向进程内核页表映射
+       if(mappages(new_pagetable, i, PGSIZE, pa, flags) != 0){
+         uvmunmap(new_pagetable, PGROUNDUP(start), (i - PGROUNDUP(start)) / PGSIZE, 0); //映射失败，取消之前的映射，但不释放实际的内存
+         return -1;
+       }
+
+     }
+     return 0;
+   }
+
+   ```
+2. 同步用户页表和进程内核页表，当用户页表改变时，进程内核页表中保留用户地址映射的部分必须改变，以保持同步，在userinit创建第一个进程时，将用户页表拷贝到进程的内核页表，在fork，exec，growproc中添加更改内核页表的代码
+
+   ```
+   <userinit>
+   p->sz = PGSIZE;
+     //new Add
+     //copy user page to process kernel page
+     if(copy_pagetable(p->pagetable, p->proc_kernel_pagetable, 0, p->sz) != 0)
+       panic("userinit: copy_pagetable failed");
+
+   <exec>
+   //new Add
+     //清除进程内核页表中对程序内存的旧映射，然后重新建立映射
+     uvmunmap(p->proc_kernel_pagetable, 0, PGROUNDUP(oldsz) / PGSIZE, 0);
+     if(copy_pagetable(p->pagetable, p->proc_kernel_pagetable, 0, p->sz) != 0){
+       proc_freepagetable(p->pagetable, p->sz);
+       return -1;
+     }
+
+   <fork>
+   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0 || 
+         copy_pagetable(np->pagetable, np->proc_kernel_pagetable, 0, p->sz) != 0){ //将子进程用户页表拷贝到子进程内核页表
+
+   <growproc>
+   if(n > 0){
+       uint64 newsz;
+       if((newsz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+         return -1;
+       }
+
+       if(copy_pagetable(p->pagetable, p->proc_kernel_pagetable, sz, n) != 0){
+         //向进程内核页表拷贝失败时，撤销用户页表内存的扩大，以实现同步映射
+         printf("grow copy failed\n");
+         uvmdealloc(p->pagetable, newsz, sz);
+         return -1;
+       }
+       sz = newsz;
+
+     } else if(n < 0){
+       uvmdealloc(p->pagetable, sz, sz + n);
+       //减小用户内存后，内核进程页表也应该对应减少对应映射，但是进程内核页表不应该释放实际用户内存（事实上上一步已经这么做了）
+       //因此不能使用uvmdealloc函数，在vm.c定义新函数kuvmdealloc,减少内核进程页表对应的映射
+       sz = kvmdealloc(p->proc_kernel_pagetable, sz, sz + n);
+     }
+
+   ```
+
+   其中kvmdealloc在vm.c中定义，与uvmdealloc唯一不同的时，取消映射时，不释放物理内存
+
+   ```
+   //deallocate process kernel pagetable
+   uint64
+   kvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+   {
+     if(newsz >= oldsz)
+       return oldsz;
+     if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+       uint64 npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+       uvmunmap(pagetable, PGROUNDUP(newsz), npages, 0);
+     }
+     return newsz;
+   }
+   ```
+3. 修改vm.c中pkvminit函数，取消CLINT的映射，并在释放时取消对应部分
+
+   ```
+   <vm.c/pkvminit>
+    // CLINT
+     //内核启动时用到CLINT，运行过程中不使用，用户进程的最大内存与此部分重叠，因此取消该部分映射
+     // if(mappages(proc_kernel_pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W) != 0)
+     //   panic("pkvmmap clint");
+
+     // PLIC
+
+   <free_proc_kernelpagetable>
+   // uvmunmap(pagetable, CLINT, (uint64)(0x10000 / PGSIZE), 0);
+   ```
+
+   并在exec函数与growproc函数内进行内存限制的检查
+
+   ```
+   <exec>
+   //添加内存限制
+       if(sz1 >= PLIC)
+         goto bad;
+   //
+       sz = sz1;
+
+   <growproc>
+   //检查内存限制
+     if(PGROUNDUP(p->sz + n) >= PLIC)
+       return -1;
+   ```
+4. 修改copyin，copyinstr函数，调用copyin_in, copyinstr_new
+
+   ```
+   int
+   copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+   {
+
+     return copyin_new(pagetable, dst, srcva, len);
+   }
+
+
+   int
+   copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+   {
+     
+     return copyinstr_new(pagetable, dst, srcva, max);
+   }
+   ```
+
+## 流程解释
+
+1. 实验的目的是在内核运行程序时直接使用用户指针，而不用解引用成物理地址，因此需要将用户空间的映射添加到进程的内核也表上，也就是将进程的用户页表的映射添加到进程的内核页表上，具体就是遍历进程用户页表，找出物理地址，然后在进程内核页表再次映射即可，他们映射到同一个物理地址，因此映射之前无需分配物理内存。此方案依赖于用户的虚拟地址范围不与内核用于自身指令和数据的虚拟地址范围重叠。Xv6使用从零开始的虚拟地址作为用户地址空间，幸运的是内核的内存从更高的地址开始。然而，这个方案将用户进程的最大大小限制为小于内核的最低虚拟地址。内核启动后，在XV6中该地址是`0xC000000`，即PLIC寄存器的地址，后面会说到关于这个内存的限制
+2. 在内核更改用户进程页表的每一处，以相同的方式更改进程内核页表，以实现内核进程页表中用户空间部分的同步，在userinit中会创建第一个进程，并将初始化代码拷贝入用户内存，此时需要将用户页表拷贝入内核进程页表以实现初始化；exec函数中进行了进程的替换，但是并没有用allocproc产生新的proc指针，因此进程的内核页表还是替换前的，此时应该先取消原有映射，再将用户空间映射拷贝到进程内核页表；growproc用于扩展或缩小用户空间，扩展时，先扩展用户空间，再拷贝到内核页表，若拷贝失败，应该缩小已经扩展的用户空间实现同步映射，缩小时，先进行用户空间缩小，再取消内核页表中相应的映射。
+3. 映射时要确保不能与内核页表中之前的映射冲突，实验中提示启动后映射的地址范围是[0, PLIC]，但是由内核页表原有映射可知，在PLIC之前，还有一个CLINT（核心本地中断器）的映射，这会产生映射冲突，经查阅发现，CLINT只会在内核启动时用到，启动后不需要该映射，而启动时无需用到进程内核页表（事实上也不存在），故可以在创建进程的内核页表时取消CLINT的映射，并在释放时删除对应的操作。并在可能增大用户空间的位置进行内存限制的判断，确保映射到进程内核页表时不会产生映射冲突。
+
+## 遇到的问题
+
+1. 实验要求拷贝用户页表的映射到内核进程页表中，最开始想到在分配进程控制块内（allocproc）进行拷贝，但是在创建第一个进程userinit中，执行allocproc后，由向用户页表拷贝了初始化数据，故将用户页表的映射拷贝到进程内核页表需要安排到之后，
+2. 启动xv6出现错误panic: remap，应该是映射新地址时发现pte条目有效，已经存在映射。通过GDB调试发现错误出现在scheduler函数中，而scheduler函数调度第一个进程时会调用exec，而exec函数被我们修改过，因此初步怀疑问题出现在exec函数的copy_pagetable，用printf进一步验证，正确定位错误，由于错误信息是remap，这是是在进程内核页表添加映射，故应该需要先清除旧映射，再添加新的映射，因为exec用于进程的替换，并没有使用allocproc分配新的进程控制块，所以进程的内核页表没有改变，仍然保存着进程替换前的内核页表，所以需要先取消旧映射
+3. 启动xv6后运行可执行文件出现scause 0x000000000000000d
+   sepc=0x0000000080000daa stval=0x0000000000013f58
+   panic: kerneltrap，应该是缺少部分页表映射,查看出错位置，在kernel.asm找到出错位置，错误出现在mmove函数，结合printf测试，发现问题出现在copyin_new函数内，由于缺少映射，产生错误,通过调试发现问题出现在growproc函数中，同步进行扩大进程内核页表时少映射了一部分导致错误，定位到copy_pagetable函数，认真检查后发现for循环边界设置有误，边界应该是复制长度加上起始地址，而先前设置为复制长度了

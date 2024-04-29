@@ -1,4 +1,6 @@
+//#include "defs.h"
 #include "types.h"
+
 
 void*
 memset(void *dst, int c, uint n)
@@ -41,9 +43,10 @@ memmove(void *dst, const void *src, uint n)
     while(n-- > 0)
       *--d = *--s;
   } else
-    while(n-- > 0)
+    while(n-- > 0){
+      // printf("d = %s, s = %s\n", d, s);
       *d++ = *s++;
-
+    }
   return dst;
 }
 
