@@ -36,43 +36,67 @@ trapinithart(void)
 void
 usertrap(void)
 {
+  // 用于接收处理设备中断返回值的变量
   int which_dev = 0;
 
+  // 读取sstatus寄存器，判断是否来自user mode
+  // 如果不是，则陷入panic
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
   // send interrupts and exceptions to kerneltrap(),
   // since we're now in the kernel.
+  // 译：将当前模式下的中断和异常处理全部发送到kernelvec函数
+  // 因为我们当前处于内核态下
+  // 将stvec寄存器设置为kernelvec，当发生内核陷阱时会跳转到kernelvec而非之前的uservec
+  // stvec寄存器保存着发生trap时跳转的位置
   w_stvec((uint64)kernelvec);
 
   struct proc *p = myproc();
   
   // save user program counter.
+  // 将程序计数器（SPEC）的值保存一份到trapframe中去，
+  //事实上，ecall指令已经将ecall指令的地址保存到SPEC中，用于再次返回用户态时继续往下执行
+  // 这里再次保存一份到进程的trapframe中是因为发生这种情况:当程序还在内核中执行时，我们可能切换到另一个进程，并进入到那个程序的用户空间，
+  //然后那个进程可能再调用一个系统调用进而导致SEPC寄存器的内容被覆盖。
+  //所以，我们需要保存当前进程的SEPC寄存器到一个与该进程关联的内存中，这样这个数据才不会被覆盖。
   p->trapframe->epc = r_sepc();
   
+  // 读取scause寄存器
+  // 它是在我们调用ecall指令时由指令自动设置的
+  // RISC-V标准定义，当scause的值为8时，表示陷阱原因是系统调用
   if(r_scause() == 8){
     // system call
 
+    // 如果进程已经被杀死，那么直接退出
     if(p->killed)
       exit(-1);
 
     // sepc points to the ecall instruction,
     // but we want to return to the next instruction.
+    //我们并不想再次返回到用户态时还是ecall指令，而是吓一条指令
     p->trapframe->epc += 4;
 
     // an interrupt will change sstatus &c registers,
     // so don't enable until done with those registers.
+    //打开中断
+    //ecall指令会关闭中断，因为中断可能会改变sstatus和其他寄存器的值，而我们需要使用到这些寄存器
+    //现在我们已经使用完毕这些寄存器，因此需要打开中断
     intr_on();
 
+    //执行系统调用
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  } else if((which_dev = devintr()) != 0){ // 如果处理的是设备中断(interrupt)，则调用devintr来处理
     // ok
-  } else {
+  } 
+  // 否则是异常(exception)，杀死当前进程并报错
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
 
+  //如果进程被杀死，不执行后续步骤，直接结束进程
   if(p->killed)
     exit(-1);
 
@@ -80,11 +104,16 @@ usertrap(void)
   if(which_dev == 2)
     yield();
 
-  usertrapret();
+  usertrapret(); 
 }
 
 //
 // return to user space
+// 1.关中断(直到执行SRET之前，始终不响应中断)
+// 2.设置stvec到uservec
+// 3.设置trapframe中与内核有关的信息，为下一次陷阱处理做准备
+// 4.正确地设置sepc，跳转回正确的地址继续执行
+// 5.调用userret函数，准备恢复现场、切换页表、设置sscratch
 //
 void
 usertrapret(void)
@@ -94,13 +123,26 @@ usertrapret(void)
   // we're about to switch the destination of traps from
   // kerneltrap() to usertrap(), so turn off interrupts until
   // we're back in user space, where usertrap() is correct.
+  //关闭中断
+  //关闭中断的原因是，在usertrap中，我们更改了STVEC，发生trap时，会跳转到内核中处理trap的位置，
+  //下一步我们要更改STVEC寄存器，使发生trap时跳转到用户态处理trap的位置，
+  //但是我们还处于内核中，如果打开中断，并且发生中断，我们会跳转到用户态，这会导致内核出错
   intr_off();
 
+
   // send syscalls, interrupts, and exceptions to trampoline.S
+  // 设置stvec寄存器，将stvec设置为uservec
+  // 这是我们之前问题的答案，stvec寄存器就是在这里被设置指向uservec的
+  // 你可能会说，这是一个鸡生蛋和蛋生鸡的问题，只有进程触发陷阱才会被设置stvec
+  // 事实上，在fork一个新的进程时，因为fork是一个系统调用，那么它在返回到用户态时一定会经过这里
+  // 从而在一开始成功设置了stvec寄存器
   w_stvec(TRAMPOLINE + (uservec - trampoline));
+
 
   // set up trapframe values that uservec will need when
   // the process next re-enters the kernel.
+  // 译：设置trapframe中的值，这些值在下次uservec再次进入内核时会使用到
+  // 分别设置：内核页表、内核栈指针、usertrap地址、CPU的ID号
   p->trapframe->kernel_satp = r_satp();         // kernel page table
   p->trapframe->kernel_sp = p->kstack + PGSIZE; // process's kernel stack
   p->trapframe->kernel_trap = (uint64)usertrap;
@@ -108,22 +150,35 @@ usertrapret(void)
 
   // set up the registers that trampoline.S's sret will use
   // to get to user space.
-  
   // set S Previous Privilege mode to User.
+  // 译：设置好trampoline.S中的sret指令会用到的寄存器，以返回用户态
+  // 将前一个模式设置为用户态
+  // 这里在为返回用户态做准备
   unsigned long x = r_sstatus();
+
+  // 将SPP位清空，确保陷阱返回到用户模式
+  // 设置SPIE为1，在返回时SPIE会被设置给SIE，确保supervisor模式下的中断被打开
   x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
   x |= SSTATUS_SPIE; // enable interrupts in user mode
   w_sstatus(x);
 
   // set S Exception Program Counter to the saved user pc.
+  // 将trapframe中保存的pc值写入sepc
+  // 注意对于系统调用来说，这里其实指向了陷阱指令的下一条指令
+  // 因为在usertrap中我们给trapframe中的epc加4了
   w_sepc(p->trapframe->epc);
 
   // tell trampoline.S the user page table to switch to.
+  // 准备切换回用户页表，准备好要写入的SATP值
   uint64 satp = MAKE_SATP(p->pagetable);
 
   // jump to trampoline.S at the top of memory, which 
   // switches to the user page table, restores user registers,
   // and switches to user mode with sret.
+  // 译：跳转到位于内存顶端的trampoline.S，这将会切换到用户页表
+  // 恢复用户寄存器，并使用sret指令回到用户模式
+  // 首先得到userret代码的虚拟地址，然后将虚拟地址直接作为函数指针调用之
+  // 传入了两个参数TRAPFRAME和satp，按照calling convention，这两个参数将会被放置到a0和a1
   uint64 fn = TRAMPOLINE + (userret - trampoline);
   ((void (*)(uint64,uint64))fn)(TRAPFRAME, satp);
 }
