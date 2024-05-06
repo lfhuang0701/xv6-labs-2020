@@ -121,6 +121,7 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
+  backtrace();
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -131,4 +132,22 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void
+backtrace()
+{
+  uint64 fp = r_fp();
+
+  uint64 stack_up = PGROUNDUP(fp); //内核栈占用一个页面大小（4K）,由当前fp获取到栈底位置（栈向低地址扩张，因此栈底就是fp最高地址处)
+  uint64 stack_down = PGROUNDDOWN(fp);
+  printf("backtrace:\n");
+  while (fp < stack_up && fp > stack_down)
+  {
+    uint64 ra = *(uint64*)(fp - 8); //当前栈指针fp-8的位置存放返回地址
+    printf("%p\n", ra);
+
+    fp = *(uint64*)(fp - 16); //当前栈指针fp-16的位置存放调用者的栈指针
+
+  }
 }

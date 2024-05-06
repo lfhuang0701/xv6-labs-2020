@@ -84,14 +84,14 @@ uservec:
         ld t1, 0(a0)
         csrw satp, t1
 
-     @ 现在这里输出的是由内核设置好的巨大的kernel page table。所以现在我们成功的切换了page table，
-     @ 我们在这个位置进展的很好，Stack Pointer指向了kernel stack；我们有了kernel page table，可以读取kernel data。
-     @ 我们已经准备好了执行内核中的C代码了。这里还有个问题，为什么代码没有崩溃？毕竟我们在内存中的某个位置执行代码，
-     @ 程序计数器保存的是虚拟地址，如果我们切换了page table，为什么同一个虚拟地址不会通过新的page table寻址走到一些无关的page中？
-     @ 看起来我们现在没有崩溃并且还在执行这些指令。有人来猜一下原因吗？
-     @ 学生回答：因为我们还在trampoline.S代码中，而trampoline代码在用户空间和内核空间都映射到了同一个地址。
-     @ 完全正确。我不知道你们是否还记得user page table的内容，trampoline page在user page table中的映射与kernel page table中的映射是完全一样的。这两个page table中其他所有的映射都是不同的，只有trampoline page的映射是一样的，因此我们在切换page table时，寻址的结果不会改变，我们实际上就可以继续在同一个代码序列中执行程序而不崩溃。这是trampoline page的特殊之处，它同时在user page table和kernel page table都有相同的映射关系。
-     @ 之所以叫trampoline page，是因为你某种程度在它上面“弹跳”了一下，然后从用户空间走到了内核空间。
+     # 现在这里输出的是由内核设置好的巨大的kernel page table。所以现在我们成功的切换了page table，
+     # 我们在这个位置进展的很好，Stack Pointer指向了kernel stack；我们有了kernel page table，可以读取kernel data。
+     # 我们已经准备好了执行内核中的C代码了。这里还有个问题，为什么代码没有崩溃？毕竟我们在内存中的某个位置执行代码，
+     # 程序计数器保存的是虚拟地址，如果我们切换了page table，为什么同一个虚拟地址不会通过新的page table寻址走到一些无关的page中？
+     # 看起来我们现在没有崩溃并且还在执行这些指令。有人来猜一下原因吗？
+     # 学生回答：因为我们还在trampoline.S代码中，而trampoline代码在用户空间和内核空间都映射到了同一个地址。
+     # 完全正确。我不知道你们是否还记得user page table的内容，trampoline page在user page table中的映射与kernel page table中的映射是完全一样的。这两个page table中其他所有的映射都是不同的，只有trampoline page的映射是一样的，因此我们在切换page table时，寻址的结果不会改变，我们实际上就可以继续在同一个代码序列中执行程序而不崩溃。这是trampoline page的特殊之处，它同时在user page table和kernel page table都有相同的映射关系。
+     # 之所以叫trampoline page，是因为你某种程度在它上面“弹跳”了一下，然后从用户空间走到了内核空间。
 
         #清空快表TLB
         sfence.vma zero, zero
