@@ -101,20 +101,24 @@ usertrap(void)
     exit(-1);
 
   //timer interrupt.
-  if(which_dev == 2 && p->AlarmInterval != 0 && p->InHandle == 0){ //产生时钟中断后，判断警报是否开启，是否在处理警报过程中
+  if(which_dev == 2){
 
-      p->TrickCount++;  //计时器加1
+    if(p->AlarmInterval != 0 && p->InHandle == 0){ //产生时钟中断后，判断警报是否开启，是否在处理警报过程中
 
-      if(p->TrickCount == p->AlarmInterval){  //时间间隔期满
+        p->TrickCount++;  //计时器加1
 
-    
-          memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));//保存当前陷阱帧，用于处理警报后在sigreturn恢复现场
-          
-          p->trapframe->epc = (uint64)(p->alarm_handle); //将内核态进入到用户态的地址设置为警报处理函数的地址
+        if(p->TrickCount == p->AlarmInterval){  //时间间隔期满
 
-          p->InHandle = 1;  //设置标志位，防止程序重入
+
+            memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));//保存当前陷阱帧，用于处理警报后在sigreturn恢复现场
+
+            p->trapframe->epc = (uint64)(p->alarm_handle); //将内核态进入到用户态的地址设置为警报处理函数的地址
+
+            p->InHandle = 1;  //设置标志位，防止程序重入
+        }
       }
-    }
+    yield();
+  }
   usertrapret(); 
 }
 

@@ -776,10 +776,13 @@ preempt(char *s)
   }
 
   close(pfds[1]);
+  printf("read pipe\n");
   if(read(pfds[0], buf, sizeof(buf)) != 1){
     printf("%s: preempt read error");
     return;
   }
+  printf("read pipe finished\n");
+
   close(pfds[0]);
   printf("kill... ");
   kill(pid1);
