@@ -67,3 +67,36 @@ A: 输出的是一个受调用前的代码影响的“随机”的值。因为 p
 ## 出现的问题
 
 回溯得到的最后一个返回地址为0x0000000000000012，使用addr2line -e kernel/kernel进行地址翻译时，出现结果??:0，出现错误，原因在于在backtrace中循环终止条件fp不是严格小于栈底 ，这会造成fp等于栈底，而栈底这个值在用户陷入内核态执行系统调用时残存在FP寄存器中的值，它指向一个很小的地址，这个地址本质上指向了一个原先用户态的虚拟地址，并不是系统调用时的地址，解决方法就是修改循环条件，使fp严格小于栈底
+
+# lab4.3 Alarm(hard)
+
+## 实验内容
+
+设置定时器，实现在一个进程运行时定时打断转而处理其他函数，实现两个系统调用sigalarm和sigreturn，其中sigalarm有两个参数，分别是时间间隔和定时处理函数，用于设置定时器的时间间隔和定时处理函数，sigreturn 用在处理函数内，用于重置定时器
+
+## 知识点
+
+1. 进一步熟悉trap机制，使用时间中断完成此实验
+2. 在trap内若非正常返回用户态而是需要跳转用户态执行程序时，应该先保护现场，并在从用户态返回前恢复现场
+3. 区分系统调用与设备中断
+
+## 实验流程
+
+1. 修改***Makefile***以使***alarmtest.c***被编译为xv6用户程序
+2. 在user/user.h声明sigalarm和sigreturn，并在user/usy.pl添加用户态到内核态的入口entry，接着在kernel/syscall.h,syscall.c添加系统调用sys_sigalarm和sys_sigreturn
+3. 在proc.h添加新成员，报警处理函数alarmhandle, 报警间隔AlarmInterval, 已经过的时间trickcount，是否在报警处理中的标志位inhandle，用于保护现场及恢复现场的陷阱帧alarm_trapframe, 并在allocproc中初始化
+4. 在sysproc.c中添加sys_sigalarm和sys_sigreturn的定义，其中sys_sigalarm用于将用户态函数传递来的参数传给当前进程proc结构体，有两个参数，分别是报警时间间隔和报警处理函数。sys_sigreturn用于计数器清零，标志位清零，以及恢复现场（将alarm_trapframe复制给trapframe）。
+5. 在trap.c中添加时间中断产生时的处理，首先判断警报计数器是否打开，检查是否处于警报处理函数中，若计数器打开且未处于处理函数中，则计数器加1，并判断时间间隔期是否已满，若到达设定时间间隔，第一步保护现场（将trapframe传给alarm_frame），接着设置trapframe->epc，用于从内核返回到用户态时，返回到警报处理函数的地址，最后设置标志位inhandle为1，防止程序重入
+6. 流程图，其中4是sys_sigreturn的系统调用，流程图省略了sys_sigalarm系统调用的过程，而是直接从时间中断产生开始
+
+   ![在这里插入图片描述](https://img-blog.csdnimg.cn/cb55cc8a45de452bb868b8112ee807df.png)
+
+## 遇到的问题
+
+1. ```
+   test0 start
+   ....................scause 0x000000000000000f
+   sepc=0x0000000080000e10 stval=0x0000000000000000
+   panic: kerneltrap
+   ```
+   在内核态出现错误，出错位置为80000e10，在kernel.asm中查询得知发生错误的函数为memmove，因此可以判断是到达时间间隔后保存现场时出错，检查发现在proc.c的allocproc中没有为alarm_trapframe分配物理内存，导致memmove错误，参考trapframe的初始化与释放添加alarm_trapframe的初始化与释放代码，问题解决

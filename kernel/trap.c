@@ -55,8 +55,8 @@ usertrap(void)
   struct proc *p = myproc();
   
   // save user program counter.
-  // 将程序计数器（SPEC）的值保存一份到trapframe中去，
-  //事实上，ecall指令已经将ecall指令的地址保存到SPEC中，用于再次返回用户态时继续往下执行
+  // 将程序计数器（SEPC）的值保存一份到trapframe中去，
+  //事实上，ecall指令已经将ecall指令的地址保存到SEPC中，用于再次返回用户态时继续往下执行
   // 这里再次保存一份到进程的trapframe中是因为发生这种情况:当程序还在内核中执行时，我们可能切换到另一个进程，并进入到那个程序的用户空间，
   //然后那个进程可能再调用一个系统调用进而导致SEPC寄存器的内容被覆盖。
   //所以，我们需要保存当前进程的SEPC寄存器到一个与该进程关联的内存中，这样这个数据才不会被覆盖。
@@ -74,7 +74,7 @@ usertrap(void)
 
     // sepc points to the ecall instruction,
     // but we want to return to the next instruction.
-    //我们并不想再次返回到用户态时还是ecall指令，而是吓一条指令
+    //我们并不想再次返回到用户态时还是ecall指令，而是下一条指令
     p->trapframe->epc += 4;
 
     // an interrupt will change sstatus &c registers,
@@ -100,10 +100,21 @@ usertrap(void)
   if(p->killed)
     exit(-1);
 
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  //timer interrupt.
+  if(which_dev == 2 && p->AlarmInterval != 0 && p->InHandle == 0){ //产生时钟中断后，判断警报是否开启，是否在处理警报过程中
 
+      p->TrickCount++;  //计时器加1
+
+      if(p->TrickCount == p->AlarmInterval){  //时间间隔期满
+
+    
+          memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));//保存当前陷阱帧，用于处理警报后在sigreturn恢复现场
+          
+          p->trapframe->epc = (uint64)(p->alarm_handle); //将内核态进入到用户态的地址设置为警报处理函数的地址
+
+          p->InHandle = 1;  //设置标志位，防止程序重入
+      }
+    }
   usertrapret(); 
 }
 

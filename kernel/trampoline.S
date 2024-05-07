@@ -176,7 +176,7 @@ userret:
         
         # return to user mode and user pc.
         # usertrapret() set up sstatus and sepc.
-        # 译：返回用户模式和，恢复对应的PC值
+        # 译：返回用户模式，恢复对应的PC值
         # usertrapret()已经提前设置好了sstatus和sepc的值
         # 故sret可以正常执行，这里的sret指令与ecall指令都有硬件完成，作用正好相反
         sret
