@@ -16,12 +16,12 @@ sparse_memory(char *s)
   char *i, *prev_end, *new_end;
   
   prev_end = sbrk(REGION_SZ);
+  
   if (prev_end == (char*)0xffffffffffffffffL) {
     printf("sbrk() failed\n");
     exit(1);
   }
   new_end = prev_end + REGION_SZ;
-
   for (i = prev_end + PGSIZE; i < new_end; i += 64 * PGSIZE)
     *(char **)i = i;
 
@@ -31,7 +31,6 @@ sparse_memory(char *s)
       exit(1);
     }
   }
-
   exit(0);
 }
 
@@ -62,6 +61,7 @@ sparse_memory_unmap(char *s)
       exit(0);
     } else {
       int status;
+
       wait(&status);
       if (status == 0) {
         printf("memory not unmapped\n");
@@ -69,7 +69,6 @@ sparse_memory_unmap(char *s)
       }
     }
   }
-
   exit(0);
 }
 

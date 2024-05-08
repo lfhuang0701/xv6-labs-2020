@@ -67,7 +67,35 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause() == 15 || r_scause() == 13){  //页表错误
+
+    uint64 va = r_stval();
+    //printf("page fault: %p\n", va);
+    //printf("page fault: p->sz: %p\n", myproc()->sz);
+
+    // 如果某个进程在高于sbrk()分配的任何虚拟内存地址上出现页错误，则终止该进程
+    if(va >= myproc()->sz || va <= PGROUNDDOWN(p->trapframe->sp))
+      exit(-1);
+
+
+    va = PGROUNDDOWN(va);
+    char *mem;
+    if((mem = kalloc()) == 0){ //物理内存分配失败
+      printf("usertrap(): page fault: kalloc() failed\n");
+      p->killed = 1;
+    }
+    else{
+      memset(mem, 0, PGSIZE);
+      if(mappages(myproc()->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+        kfree(mem);
+        printf("usertrap(): page fault: mappages() failed\n");
+        p->killed = 1;
+      }
+
+    }
+
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
