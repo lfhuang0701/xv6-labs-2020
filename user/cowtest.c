@@ -33,11 +33,11 @@ simpletest()
     exit(-1);
   }
 
-  if(pid == 0)
+  if(pid == 0){
     exit(0);
-
+  }
+  
   wait(0);
-
   if(sbrk(-sz) == (char*)0xffffffffffffffffL){
     printf("sbrk(-%d) failed\n", sz);
     exit(-1);
@@ -180,6 +180,7 @@ filetest()
 int
 main(int argc, char *argv[])
 {
+  printf("cowtest start\n");
   simpletest();
 
   // check that the first simpletest() freed the physical memory.
