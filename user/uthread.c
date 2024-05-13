@@ -10,11 +10,33 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
+//roster new add
+struct thread_context {
+  uint64 ra;
+  uint64 sp;
+
+  
+  uint64 s0;
+  uint64 s1;
+  uint64 s2;
+  uint64 s3;
+  uint64 s4;
+  uint64 s5;
+  uint64 s6;
+  uint64 s7;
+  uint64 s8;
+  uint64 s9;
+  uint64 s10;
+  uint64 s11;
+};
 
 struct thread {
   char       stack[STACK_SIZE]; /* the thread's stack */
   int        state;             /* FREE, RUNNING, RUNNABLE */
 
+  //roster new add
+
+  struct thread_context context;  //thread's context
 };
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
@@ -63,6 +85,8 @@ thread_schedule(void)
      * Invoke thread_switch to switch from t to next_thread:
      * thread_switch(??, ??);
      */
+    thread_switch((uint64)&(t->context), (uint64)&(next_thread->context));
+
   } else
     next_thread = 0;
 }
@@ -72,11 +96,15 @@ thread_create(void (*func)())
 {
   struct thread *t;
 
-  for (t = all_thread; t < all_thread + MAX_THREAD; t++) {
-    if (t->state == FREE) break;
+  for (t = all_thread; t < all_thread + MAX_THREAD; t++) { 
+    if (t->state == FREE) break; // all_thread线程数组定义后为初始化，数组元素默认为0，而FREE为0x01,故默认初始线程数组均为FREE进程
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
+  //参考allocproc创建新进程，设置线程上下文返回地址ra，栈顶指针sp
+  t->context.ra = (uint64)func;     //将传入的函数指针作为线程的返回地址
+  t->context.sp = (uint64)t->stack + (STACK_SIZE - 1); //设置栈顶指针，由于栈是向下生长，故栈顶指针设置最高地址
+
 }
 
 void 
@@ -154,10 +182,10 @@ main(int argc, char *argv[])
 {
   a_started = b_started = c_started = 0;
   a_n = b_n = c_n = 0;
-  thread_init();
+  thread_init(); //第一个线程，用于启动，在函数执行中，stae一直为RUNNING，保证不再调用
   thread_create(thread_a);
   thread_create(thread_b);
-  thread_create(thread_c);
-  thread_schedule();
+  thread_create(thread_c); //创建三个线程，加入到线程列表all_thread中，初始ra地址为三个线程函数
+  thread_schedule();      //将启动进程切换到第一个线程，开始线程轮换执行
   exit(0);
 }
