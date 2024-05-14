@@ -18,15 +18,39 @@ struct run {
   struct run *next;
 };
 
-struct {
+// struct {
+//   struct spinlock lock;
+//   struct run *freelist;
+// } kmem;
+
+//roster new add
+struct{
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+} kmem[NCPU];
+
+//roster new add
+char *kmem_lock_names[] = {
+    "kmem_cpu_0",
+    "kmem_cpu_1",
+    "kmem_cpu_2",
+    "kmem_cpu_3",
+    "kmem_cpu_4",
+    "kmem_cpu_5",
+    "kmem_cpu_6",
+    "kmem_cpu_7",
+};
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+  // initlock(&kmem.lock, "kmem");
+
+  //roster new add
+  for(int i = 0; i < NCPU; i++){
+    initlock(&kmem[i].lock, kmem_lock_names[i]);
+  }
+
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -56,10 +80,16 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  //roster new add
+  int cpu = cpuid();
+  push_off();
+  acquire(&kmem[cpu].lock);
+
+  r->next = kmem[cpu].freelist;
+  kmem[cpu].freelist = r;
+  release(&kmem[cpu].lock);
+
+  pop_off();
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -69,12 +99,55 @@ void *
 kalloc(void)
 {
   struct run *r;
+  // roster new add
+  int cpu = cpuid();
+  push_off();
+  acquire(&kmem[cpu].lock);
+  r = kmem[cpu].freelist;
+  if(r){
+    kmem[cpu].freelist = r->next;
+    release(&kmem[cpu].lock);
+  }
+  else{
+    release(&kmem[cpu].lock);
+    // struct run *steal_r;
+    //struct run *steal_r_end = 0;
+    // int steal_pages = 64;
+    for(int i = 0; i < NCPU; i++){
+      if(i == cpu)
+        continue;
+      acquire(&kmem[i].lock);
+      // struct run *cur_r = kmem[i].freelist;
+      // while(cur_r && steal_pages){
+      //   // if(steal_pages == 64)
+      //   //   steal_r_end = cur_r; //保存偷来的空白链表的尾部
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
-  if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+      //   cur_r->next = steal_r;
+      //   steal_r = cur_r;
+      //   steal_pages--;
+      // }
+      // if(!steal_pages) break;
+      r = kmem[i].freelist;
+      if(r){
+        kmem[i].freelist = r->next;
+        release(&kmem[i].lock);
+        break;
+      }
+      release(&kmem[i].lock);
+    }
+    // if(steal_r == steal_r_end){
+    //   r = steal_r;
+    // }
+    // else { //偷来的空闲页表数量大于1
+    //   acquire(&kmem[cpu].lock);
+    //   steal_r_end->next = kmem[cpu].freelist;
+    //   kmem[cpu].freelist = steal_r->next;
+    //   release(&kmem[cpu].lock);
+    //   r = steal_r;
+    // }
+  }
+
+  pop_off();
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
