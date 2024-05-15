@@ -8,5 +8,7 @@ struct buf {
   struct buf *prev; // LRU cache list
   struct buf *next;
   uchar data[BSIZE];
+  //roster new add
+  uint timestamp; //添加时间戳
 };
 

@@ -110,41 +110,46 @@ kalloc(void)
   }
   else{
     release(&kmem[cpu].lock);
-    // struct run *steal_r;
-    //struct run *steal_r_end = 0;
-    // int steal_pages = 64;
+    struct run *steal_r = 0;
+    struct run *steal_r_end = 0;
+    int steal_pages = 64;
     for(int i = 0; i < NCPU; i++){
       if(i == cpu)
         continue;
       acquire(&kmem[i].lock);
-      // struct run *cur_r = kmem[i].freelist;
-      // while(cur_r && steal_pages){
-      //   // if(steal_pages == 64)
-      //   //   steal_r_end = cur_r; //保存偷来的空白链表的尾部
+      struct run *cur_r = kmem[i].freelist;
+      while(cur_r && steal_pages){
+        kmem[i].freelist = cur_r->next;
 
-      //   cur_r->next = steal_r;
-      //   steal_r = cur_r;
-      //   steal_pages--;
-      // }
-      // if(!steal_pages) break;
-      r = kmem[i].freelist;
-      if(r){
-        kmem[i].freelist = r->next;
-        release(&kmem[i].lock);
-        break;
+        if(steal_pages == 64)
+          steal_r_end = cur_r; //保存偷来的空白链表的尾部
+        
+        cur_r->next = steal_r;
+        steal_r = cur_r;
+        steal_pages--;
+        cur_r = kmem[i].freelist;
       }
       release(&kmem[i].lock);
+      if(!steal_pages) break;
+
+      // r = kmem[i].freelist;
+      // if(r){
+      //   kmem[i].freelist = r->next;
+      //   release(&kmem[i].lock);
+      //   break;
+      // }
+      //release(&kmem[i].lock);
     }
-    // if(steal_r == steal_r_end){
-    //   r = steal_r;
-    // }
-    // else { //偷来的空闲页表数量大于1
-    //   acquire(&kmem[cpu].lock);
-    //   steal_r_end->next = kmem[cpu].freelist;
-    //   kmem[cpu].freelist = steal_r->next;
-    //   release(&kmem[cpu].lock);
-    //   r = steal_r;
-    // }
+    if(steal_r == steal_r_end){
+      r = steal_r;
+    }
+    else { //偷来的空闲页表数量大于1
+      acquire(&kmem[cpu].lock);
+      steal_r_end->next = kmem[cpu].freelist;
+      kmem[cpu].freelist = steal_r->next;
+      release(&kmem[cpu].lock);
+      r = steal_r;
+    }
   }
 
   pop_off();

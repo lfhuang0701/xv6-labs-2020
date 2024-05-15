@@ -131,6 +131,7 @@ test0()
   for(int i = 0; i < NCHILD; i++){
     wait(0);
   }
+
   printf("test0 results:\n");
   n = ntas(1);
   if (n-m < 500)
