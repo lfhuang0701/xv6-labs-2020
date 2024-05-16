@@ -379,28 +379,59 @@ bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
   struct buf *bp;
-
+  //检查请求的块号是否在直接块内
   if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
-      ip->addrs[bn] = addr = balloc(ip->dev);
+    if((addr = ip->addrs[bn]) == 0) //判断请求的块的地址是否已经分配
+      ip->addrs[bn] = addr = balloc(ip->dev); //如果没有分配，在磁盘上为此设备分配一个新的数据块，并返回其地址
     return addr;
   }
-  bn -= NDIRECT;
+  bn -= NDIRECT; //如果不在直接块内，需要获取他在间接块内的偏移量
 
+  //判断是否超出间接块的范围（0-255）
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
-      ip->addrs[NDIRECT] = addr = balloc(ip->dev);
-    bp = bread(ip->dev, addr);
-    a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
-      a[bn] = addr = balloc(ip->dev);
-      log_write(bp);
+    if((addr = ip->addrs[NDIRECT]) == 0)    //判断间接块是否被分配
+      ip->addrs[NDIRECT] = addr = balloc(ip->dev); //从磁盘上找出一个空闲磁盘块，返回其地址，作为间接块的地址
+    bp = bread(ip->dev, addr);      //根据设备名称和分配的数据块的地址，在缓冲池中获取对应的缓冲区buf（bget函数）
+    a = (uint*)bp->data;            //获取间接块的数据地址的指针
+    if((addr = a[bn]) == 0){        //根据偏移量获取请求的块的地址
+      a[bn] = addr = balloc(ip->dev); //若未分配，在磁盘上找到一个空闲块，返回其地址
+      log_write(bp);                  //写入日志，防止crash对文件系统造成损害，这里与上面不同是因为
+                                      //这是往间接块写入了分配的块的地址，更改了间接块缓冲buf对应的磁盘，因此需要写log
+                                      //而以上分配并没有更改磁盘数据
     }
-    brelse(bp);
+    brelse(bp);                     //释放缓冲buf
     return addr;
   }
 
+  //roster new add
+  bn -= NINDIRECT;  //如果超出间接块的范围，获取他在二级间接块内的偏移量
+
+  //二级间接块
+  if(bn < NINDIRECT * NINDIRECT){
+
+    if((addr = ip->addrs[NDIRECT + 1]) == 0){ //若二级间接块未分配
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);  //分配二级间接块
+    }
+    bp = bread(ip->dev, addr);  //获取二级间接块的块缓存，便于访问其数据
+    a = (uint*)(bp->data);
+    if((addr = a[bn/NINDIRECT]) == 0){
+      //若bn对应的一级间接块未分配
+      a[bn/NINDIRECT] = addr = balloc(ip->dev); //分配一级间接块，返回的地址写入二级间接块的数据内
+      log_write(bp);          //因为更改了二级间接块对应磁盘块的数据，因此写入日志
+    }
+    brelse(bp);     //释放二级间接块的块缓存
+
+    bp = bread(ip->dev, addr); // 获取第bn/NINDIRECT个一级间接块的块缓存
+    a = (uint*)(bp->data);     //获取块缓存的数据地址
+    if((addr = a[bn % NINDIRECT]) == 0){
+      //若最终的块地址未分配
+      a[bn % NINDIRECT] = addr = balloc(ip->dev); //从磁盘块分配一个数据块，作为最终块，返回其地址
+      log_write(bp);      //更改了一级间接块的数据，写入日志
+    }
+    brelse(bp);   //释放缓存块
+    return addr;
+  }
   panic("bmap: out of range");
 }
 
@@ -409,6 +440,7 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
+  //printf("itrunc\n");
   int i, j;
   struct buf *bp;
   uint *a;
@@ -430,6 +462,29 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  //roster new add
+  //释放二级间接块
+  if(ip->addrs[NDIRECT + 1]){ //若二级间接块存在
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]); //获取二级间接块的缓冲区
+    a = (uint*)bp->data;
+    for(i = 0; i < NINDIRECT; i++){
+      if(a[i]){
+        struct buf *bp_next = bread(ip->dev, a[i]); //获取一级间接块的缓冲区
+        uint *a_next = (uint*)bp_next->data;
+        for(j = 0; j < NINDIRECT; j++){
+          if(a_next[j]){
+            bfree(ip->dev, a_next[j]);      //释放数据磁盘块
+          }
+        }
+        brelse(bp_next);  //释放一级间接块缓冲区
+        bfree(ip->dev, a[i]); //释放一级间接块的磁盘块  
+      }
+    }
+    brelse(bp); //释放二级间接块缓冲区
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);   //释放二级间接块的磁盘块
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;
