@@ -304,11 +304,39 @@ sys_open(void)
       return -1;
     }
   } else {
-    if((ip = namei(path)) == 0){
-      end_op();
-      return -1;
+    //roster new add 
+    //定义符号链接深度
+    int symlink_depth = 0;
+    while(1){
+      if((ip = namei(path)) == 0){ //namei根据路径名获取inode
+      //若文件不存在，返回错误代码
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+      if(ip->type == T_SYMLINK && (omode & O_NOFOLLOW) == 0){ //此文件位符号链接文件，且可以溯源
+        if(++symlink_depth > 10){
+          //溯源超过深度，返回错误
+          iunlockput(ip);
+          end_op();
+          return -1;
+        }
+
+        if(readi(ip, 0, (uint64)path, 0, MAXPATH) < 0){  //从文件第一个block读取符号链接文件链接的目标文件的路径名
+          iunlockput(ip);
+          end_op();
+          return -1;
+        }
+        
+        //inode使用完毕，释放锁
+        iunlockput(ip);
+      }
+      else{ //文件为普通文件或者符号链接文件设置了O_NOFOLLOW位
+        break;
+      }
     }
-    ilock(ip);
+
+
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -482,5 +510,36 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+//roster new add
+uint64
+sys_symlink(void)
+{
+  struct inode *ip;
+  char target[MAXPATH], path[MAXPATH];
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0){ //从传递的参数获取目标文件的路径名和符号链接文件的路径名
+    return -1;
+  }
+
+  begin_op();//事务的开始，涉及logging，便于crash发生后恢复文件系统
+
+  if((ip = create(path, T_SYMLINK, 0, 0)) == 0){ //为符号链接文件创建inode,
+      end_op();
+      //printf("sys_symlink:create inode fail\n");
+      return -1;
+  }
+
+  if(writei(ip, 0, (uint64)target, 0, strlen(target)) < 0){ //将目标路径存放到inode的第一个数据块中,第一个0表示内核虚拟地址，
+                                                            //第二个0表示偏移量，即符号链接文件的第一个数据块
+    iunlockput(ip); //create成功后，会获取ip->lock，此处写入失败，应该释放锁返回
+    end_op();
+    printf("sys_symlink:write ip fail\n");
+    return -1;
+  }
+
+  iunlockput(ip); //这个函数是iunlock 和iput的合并，前者为释放锁，后者为对inode的引用减1;
+  end_op();
   return 0;
 }
