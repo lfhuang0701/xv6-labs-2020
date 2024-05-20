@@ -39,11 +39,13 @@ _v1(char *p)
   int i;
   for (i = 0; i < PGSIZE*2; i++) {
     if (i < PGSIZE + (PGSIZE/2)) {
+      
       if (p[i] != 'A') {
         printf("mismatch at %d, wanted 'A', got 0x%x\n", i, p[i]);
         err("v1 mismatch (1)");
       }
     } else {
+      
       if (p[i] != 0) {
         printf("mismatch at %d, wanted zero, got 0x%x\n", i, p[i]);
         err("v1 mismatch (2)");
@@ -114,6 +116,7 @@ mmap_test(void)
   if (p == MAP_FAILED)
     err("mmap (1)");
   _v1(p);
+  //printf("test1\n");
   if (munmap(p, PGSIZE*2) == -1)
     err("munmap (1)");
 
@@ -184,8 +187,10 @@ mmap_test(void)
     char b;
     if (read(fd, &b, 1) != 1)
       err("read (1)");
-    if (b != 'Z')
+    if (b != 'Z'){
+      printf("%d b = %c\n", i,b);
       err("file does not contain modifications");
+    }
   }
   if (close(fd) == -1)
     err("close");

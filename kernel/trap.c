@@ -67,7 +67,18 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  }else if(r_scause() == 13 || r_scause() == 15){
+    //page fault
+    uint64 va = r_stval();
+    //printf("page fault\n");
+    if(vmalazyalloc(va, p) < 0){
+      printf("vmalazyalloc fail\n");
+      p->killed = 1;
+    }
+    //printf("vmalazyalloc finished\n");
+
+  } 
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

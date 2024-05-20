@@ -33,6 +33,8 @@ void            fileinit(void);
 int             fileread(struct file*, uint64, int n);
 int             filestat(struct file*, uint64 addr);
 int             filewrite(struct file*, uint64, int n);
+int             vmalazyalloc(uint64 va, struct proc *p);
+struct vma*     findvma(uint64 va, struct proc *p);
 
 // fs.c
 void            fsinit(int);
@@ -171,6 +173,7 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+void            vmaunmap(pagetable_t, uint64 va, uint64 npages, struct vma *v);
 
 // plic.c
 void            plicinit(void);

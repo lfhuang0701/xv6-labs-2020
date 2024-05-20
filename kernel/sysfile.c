@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -481,6 +482,165 @@ sys_pipe(void)
     fileclose(rf);
     fileclose(wf);
     return -1;
+  }
+  return 0;
+}
+
+//roster new add
+//在进程的地址空间映射文件 
+uint64
+sys_mmap(void){
+  uint64 addr, sz, offset;
+  int prot, flags, fd;
+  struct file *f;
+
+  //读取参数
+  if(argaddr(0, &addr) < 0 || argaddr(1, &sz) < 0 || argint(2, &prot) < 0 || argint(3, &flags) < 0
+      || argfd(4, &fd, &f) < 0 || argaddr(5, &offset) < 0){
+        return -1;
+      }
+  //printf("f->readable:%s, f->writable: %s\n", f->readable, f->writable);
+  //检查传入的权限与文件的权限是否冲突
+  if((!f->readable && (prot & PROT_READ)) || (f->writable && (prot & PROT_WRITE) && (flags & MAP_PRIVATE))
+      || (!f->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED))){
+    
+    //printf("prot fail\n");
+    return -1;
+  }
+  
+  //遍历当前进程的vma数组，寻找空闲vma，同时更新vaend，vaend是新的vma的结束地址，用于生长新的vma时确定vastart地址
+  struct proc *p = myproc();
+  struct vma *v = 0;
+  uint64 vaend = MMAPEND;
+
+  for(int i = 0; i < NVMA; i++){
+    struct vma *cur_v = &p->vma[i];
+    if(cur_v->valid == 0){
+      if(v == 0){ //防止重新分配，这里不break循环是因为需要遍历完vma数组进行更新vaend
+        v = cur_v;
+        v->valid = 1;
+      }
+    }
+    else if(cur_v->vastart < vaend){
+      vaend = PGROUNDDOWN(cur_v->vastart);
+    }
+  }
+
+  if(v == 0){
+    panic("no free vma\n");
+  }
+
+  sz = PGROUNDUP(sz); //进行页面对齐
+  v->vastart = vaend - sz;
+  v->f = f;
+  v->flags = flags;
+  v->offset = offset;
+  v->prot = prot;
+  v->sz = sz;
+  
+  filedup(v->f); //增加文件的引用
+  return v->vastart; //返回映射的首地址
+
+}
+
+//取消进程的地址空间对于文件的映射
+uint64
+sys_munmap(void){
+  uint64 va, length;
+  if(argaddr(0, &va) < 0 || argaddr(1, &length) < 0){
+    return -1;
+  }
+  //printf("va:%p, length:%p\n", va, length);
+  struct proc *p = myproc();
+  struct vma *v= findvma(va, p);
+  //printf("v->vastart:%p, v->sz: %p, v->offset: %p\n", v->vastart, v->sz, v->offset);
+  //取消映射的部分只能位于vma的起始部分或结尾部分，位于中间部分（空洞）应该返回错误
+  if(va > v->vastart && va + length < v->vastart + v->sz){
+    return -1;
+  }
+
+  uint64 va_aligned = va;
+  if(va > v->vastart){ 
+    va_aligned = PGROUNDUP(va);  //起始地址向上页面对齐，若va处于页面中间位置，则说明页面前半部分不能取消映射，此时应该向上对齐，表示此页面不取消映射
+  }
+
+  //va页面对齐后要重新计算写入的字节数
+  uint64 nunmap_bytes = length - (va_aligned - va);
+  if(nunmap_bytes < 0)
+    nunmap_bytes = 0;
+
+  //由于要进行写回磁盘操作，故仿造uvmunmap函数自定义取消映射函数vmaunmap（）
+  vmaunmap(p->pagetable, va_aligned, nunmap_bytes, v);
+
+  //如果取消映射的是vma的起始部分，应该更新vma的起始地址及文件偏移量,此处应该先更新offset，再更新vastart
+  if(va == v->vastart){
+    v->offset += length; 
+    v->vastart += length;  
+  }
+  v->sz -= length;
+
+  //printf("v->vastart:%p, v->sz: %p, v->offset: %p\n", v->vastart, v->sz, v->offset);
+  if(v->sz <= 0){
+    fileclose(v->f);
+    v->valid = 0;
+    //printf("close v\n");
+  }
+  //printf("v->vastart:%p, v->sz: %p, v->offset: %p\n", v->vastart, v->sz, v->offset);
+  return 0;
+}
+
+//定义懒分配函数，用于page fault时进行分配
+int
+vmalazyalloc(uint64 va, struct proc *p){
+
+  struct vma *v = findvma(va, p);
+  //printf("va:%p\n", va);
+  if(v == 0){
+    printf("find vma fail\n");
+    return -1;
+  }
+
+  //分配物理页
+  void *pa = kalloc();
+  memset(pa, 0, PGSIZE);
+
+  //从磁盘读取文件内容到物理页上
+  begin_op();
+  ilock(v->f->ip);
+  //偏移量应该是vma在文件内的偏移量加上当前虚拟地址在vma内的偏移量，在vma内的偏移量需要页面对齐
+  readi(v->f->ip, 0, (uint64)pa, PGROUNDDOWN(va - v->vastart) + v->offset, PGSIZE);
+  iunlock(v->f->ip);
+  end_op();
+
+  //设置pte条目的标志位
+  int PTE_flags = PTE_U;
+  if(v->prot & PROT_READ){
+    PTE_flags |= PTE_R;
+  }
+  if(v->prot & PROT_WRITE){
+    PTE_flags |= PTE_W;
+  }
+  if(v->prot & PROT_EXEC){
+    PTE_flags |= PTE_X;
+  }
+
+  //使用mappage映射页面
+  if(mappages(p->pagetable, va, PGSIZE, (uint64)pa, PTE_flags) < 0){
+    panic("vmalazyalloc: mappages fail");
+  }
+
+  return 0;
+
+}
+
+//给定虚拟地址va，查找对应vma指针
+struct vma *findvma(uint64 va, struct proc *p){
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &p->vma[i];
+    //printf("v%d :v->sz: %p, v->valid:%d, v->vastart: %p, va:%p\n", i, v->sz, v->valid, v->vastart, va);
+    if(va >= v->vastart && va < v->vastart + v->sz){
+      return v;
+    }
   }
   return 0;
 }

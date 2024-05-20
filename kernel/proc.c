@@ -114,6 +114,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
@@ -134,6 +135,12 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  //roster new add
+  //初始化vma数组
+  for(int i = 0; i < NVMA; i++){
+    p->vma[i].valid = 0;
+  }
+
   return p;
 }
 
@@ -146,6 +153,13 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  //roster new add
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &p->vma[i];
+    vmaunmap(p->pagetable, v->vastart, v->sz, v);
+  }
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -296,6 +310,15 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  //roster new add
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &p->vma[i];
+    if(v->valid){
+      np->vma[i] = *v;
+      filedup(v->f);
+    }
+  }
+  
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;

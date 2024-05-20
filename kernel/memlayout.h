@@ -65,3 +65,6 @@
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
+//new add 堆区最后地址作为vma的起始地址，自上而下生长
+#define MMAPEND TRAPFRAME

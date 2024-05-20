@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+#include "fcntl.h"
+#include "sleeplock.h"
+#include "file.h"
 
 /*
  * the kernel's page table.
@@ -427,5 +432,43 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+//roster new add
+//取消vma的映射
+void
+vmaunmap(pagetable_t pagetable, uint64 va, uint64 nbytes, struct vma *v)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if((va % PGSIZE) != 0)
+    panic("uvmunmap: not aligned");
+
+  for(a = va; a < va + nbytes; a += PGSIZE){
+    if((pte = walk(pagetable, a, 0)) == 0)
+      panic("sys_unmap: walk");
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("sys_unmap: not a leaf");
+    if(*pte & PTE_V){
+      uint64 pa = PTE2PA(*pte);
+      if((v->flags & MAP_SHARED) && (*pte & PTE_D)){//如果设置了修改的内容写回文件
+        //当前虚拟地址在vma内的偏移量,用于后续写入磁盘文件
+        uint64 aoff = a - v->vastart;
+        begin_op();
+        ilock(v->f->ip);
+        if(aoff + PGSIZE > v->sz){  // if the last page is not a full 4k page
+          writei(v->f->ip, 0, pa, v->offset + aoff, v->sz - aoff);
+        } else { // full 4k pages
+          writei(v->f->ip, 0, pa, v->offset + aoff, PGSIZE);
+        }
+        iunlock(v->f->ip);
+        end_op();
+      }
+      kfree((void*)pa);
+      //*pte = 0;
+    }
+    *pte = 0;
   }
 }
